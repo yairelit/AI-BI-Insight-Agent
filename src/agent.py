@@ -3,14 +3,15 @@ from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
-from openai import OpenAI
+# מעבר ל-SDK החדש
+from google import genai
+from google.genai import types
 
 from .database import DatabaseManager
 from .prompts import INSIGHT_PROMPT, SYSTEM_PROMPT
 from .utils import first_statement, is_safe_select, strip_sql_response
 
 load_dotenv()
-
 
 class BIAgent:
     """Loads schema, asks the model for SQL, runs it read-only, optionally summarizes results."""
@@ -22,31 +23,35 @@ class BIAgent:
         insight_model: str | None = None,
     ):
         self.db = DatabaseManager(db_path)
-        self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-        self.insight_model = insight_model or self.model
-        self._client: OpenAI | None = None
+        
+        # Update to Gemini 2.0 Flash by default (removed the models/ prefix because the new Client adds it)
+        default_model = os.environ.get("GOOGLE_MODEL", "gemini-2.0-flash")
+        self.model_name = model or default_model
+        self.insight_model_name = insight_model or self.model_name
+        
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        # יצירת ה-Client החדש במקום genai.configure
+        self.client = genai.Client(api_key=api_key) if api_key else None
 
-    @property
-    def client(self) -> OpenAI:
-        if self._client is None:
-            self._client = OpenAI()
-        return self._client
+    def _chat(self, system: str, user: str, model_name: str) -> str:
+        if not self.client:
+            return "Error: API key not configured."
 
-    def _chat(self, system: str, user: str, model: str) -> str:
-        r = self.client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.2,
+        # The new structure of sending a message with system instructions
+        response = self.client.models.generate_content(
+            model=model_name,
+            contents=user,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=0.2,
+            )
         )
-        return (r.choices[0].message.content or "").strip()
+        return (response.text or "").strip()
 
     def generate_sql(self, question: str) -> str:
         schema = self.db.get_schema()
         system = SYSTEM_PROMPT.format(schema=schema)
-        return self._chat(system, question, self.model)
+        return self._chat(system, question, self.model_name)
 
     def summarize(
         self,
@@ -60,6 +65,7 @@ class BIAgent:
         preview = preview_df.to_json(orient="records", date_format="iso")
         if len(preview) > max_chars:
             preview = preview[:max_chars] + "…"
+        
         user = INSIGHT_PROMPT.format(
             question=question,
             sql=sql,
@@ -69,7 +75,7 @@ class BIAgent:
         return self._chat(
             "You turn query results into concise business insights.",
             user,
-            self.insight_model,
+            self.insight_model_name,
         )
 
     def ask(self, question: str, with_insight: bool = True) -> dict[str, Any]:

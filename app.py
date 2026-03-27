@@ -37,8 +37,8 @@ ensure_sample_database(db_path)
 question = st.text_area("Your question", placeholder="e.g. What was total sales by region?")
 
 if st.button("Run", type="primary") and question.strip():
-    if not os.environ.get("OPENAI_API_KEY"):
-        st.error("Set OPENAI_API_KEY in the sidebar or in a `.env` file.")
+    if not os.environ.get("GOOGLE_API_KEY"):
+        st.error("Set GOOGLE_API_KEY in the sidebar or in a .env file.")
     else:
         with st.spinner("Thinking…"):
             agent = BIAgent(db_path)
